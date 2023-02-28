@@ -23,6 +23,7 @@ use alekciy\ofd\providers\taxcom\Model\CashDeskShort;
 use alekciy\ofd\providers\taxcom\Model\Document;
 use alekciy\ofd\providers\taxcom\Model\OutletShort;
 use alekciy\ofd\providers\taxcom\Model\ShiftShort;
+use alekciy\ofd\providers\taxcom\Request\AccountList;
 use alekciy\ofd\providers\taxcom\Request\DocumentInfo;
 use GuzzleHttp\Exception\GuzzleException;
 use DateTime;
@@ -37,244 +38,255 @@ use DateTimeZone;
  */
 class Taxcom implements ProviderInterface
 {
-	/** @var Client */
-	protected $client = null;
+    /** @var Client */
+    protected $client = null;
 
-	/**
-	 * @param Client $client
-	 */
-	public function __construct(Client $client)
-	{
-		$this->client = $client;
-	}
+    /**
+     * @param Client $client
+     */
+    public function __construct(Client $client)
+    {
+        $this->client = $client;
+    }
 
-	/**
-	 * Для запросов с постраничной навигацией загрузит все возможные элементы.
-	 *
-	 * @param RequestPage $endpoint
-	 * @return array
-	 * @throws Exception
-	 * @throws GuzzleException
-	 */
-	private function getAllItemList(RequestPage $endpoint): array
-	{
-		$result = [];
-		do {
-			$response = $this->client->request($endpoint);
-			foreach ($response['records'] as $record) {
-				$result[] = $record;
-			}
+    /**
+     * Для запросов с постраничной навигацией загрузит все возможные элементы.
+     *
+     * @param RequestPage $endpoint
+     * @return array
+     * @throws Exception
+     * @throws GuzzleException
+     */
+    private function getAllItemList(RequestPage $endpoint): array
+    {
+        $result = [];
+        do {
+            $response = $this->client->request($endpoint);
 
-			$lastPageNumber = ceil($response['counts']['recordFilteredCount'] / $endpoint->perPage);
-			++$endpoint->pageNumber;
-		} while ($endpoint->pageNumber <= $lastPageNumber);
-		return $result;
-	}
+            foreach ($response['records'] as $record) {
+                $result[] = $record;
+            }
 
-	/**
-	 * @inheritDoc
-	 *
-	 * @return OutletInterface[]
-	 * @throws GuzzleException
-	 * @throws Exception
-	 */
-	public function getOutletList(): array
-	{
-		$result = [];
-		$responseOutletList = $this->getAllItemList(new OutletList([]));
-		foreach ($responseOutletList as $responseOutlet) {
-			$outletShort = new OutletShort($responseOutlet);
-			$result[$outletShort->id] = $outletShort;
-		}
-		return $result;
-	}
+            $lastPageNumber = ceil($response['counts']['recordFilteredCount'] ?? $response['counts']['recordCount'] / $endpoint->perPage);
+            ++$endpoint->pageNumber;
+        } while ($endpoint->pageNumber <= $lastPageNumber);
+        return $result;
+    }
 
-	/**
-	 * @inheritDoc
-	 *
-	 * @throws GuzzleException
-	 * @throws Exception
-	 */
-	public function getCashDeskList(OutletInterface $outlet = null): array
-	{
-		$result = [];
-		$outletList = $outlet instanceof OutletInterface
-			? [$outlet]
-			: $this->getOutletList();
-		foreach ($outletList as $outlet) {
-			$responseCashDeskList = $this->getAllItemList(new CashDeskList([
-				'outletId' => $outlet->getId(),
-			]));
-			foreach ($responseCashDeskList as $responseCashDesk) {
-				$result[] = new CashDeskShort($responseCashDesk);
-			}
-		}
-		return $result;
-	}
+    /**
+     * @inheritDoc
+     *
+     * @return OutletInterface[]
+     * @throws GuzzleException
+     * @throws Exception
+     */
+    public function getOutletList(): array
+    {
+        $result = [];
+        $responseOutletList = $this->getAllItemList(new OutletList([]));
+        foreach ($responseOutletList as $responseOutlet) {
+            $outletShort = new OutletShort($responseOutlet);
+            $result[$outletShort->id] = $outletShort;
+        }
+        return $result;
+    }
 
-	/**
-	 * @inheritDoc
-	 *
-	 * @throws Exception
-	 * @throws GuzzleException
-	 */
-	public function getShiftList(CashDeskInterface $cashDesk = null, DateTime $start = null, DateTime $end = null): array
-	{
-		$result = [];
+    /**
+     * @inheritDoc
+     *
+     * @throws GuzzleException
+     * @throws Exception
+     */
+    public function getCashDeskList(OutletInterface $outlet = null): array
+    {
+        $result = [];
+        $outletList = $outlet instanceof OutletInterface
+            ? [$outlet]
+            : $this->getOutletList();
+        foreach ($outletList as $outlet) {
+            $responseCashDeskList = $this->getAllItemList(new CashDeskList([
+                'outletId' => $outlet->getId(),
+            ]));
+            foreach ($responseCashDeskList as $responseCashDesk) {
+                $result[] = new CashDeskShort($responseCashDesk);
+            }
+        }
+        return $result;
+    }
 
-		// Задаем время
-		if (!$start instanceof DateTime) {
-			$start = new DateTime('today');
-		}
-		if (!$end instanceof DateTime) {
-			$end = new DateTime('tomorrow');
-		}
-		// Сервис оперирует часовым поясом +0, поэтому корректируем
-		$tz = new DateTimeZone('UTC');
-		$start->setTimezone($tz);
-		$end->setTimezone($tz);
+    /**
+     * @inheritDoc
+     *
+     * @throws Exception
+     * @throws GuzzleException
+     */
+    public function getShiftList(CashDeskInterface $cashDesk = null, DateTime $start = null, DateTime $end = null): array
+    {
+        $result = [];
 
-		$cashDeskList = $cashDesk instanceof CashDeskInterface
-			? [$cashDesk]
-			: $this->getCashDeskList();
-		foreach ($cashDeskList as $cashDesk) {
-			$responseShiftList = $this->getAllItemList(new ShiftList([
-				'fnFactoryNumber' => $cashDesk->getFnFactoryNumber(),
-				'start'           => $start->format('Y-m-d\TH:i:s'),
-				'end'             => $end->format('Y-m-d\TH:i:s'),
-			]));
-			foreach ($responseShiftList as $responseShift) {
-				$result[] = new ShiftShort($responseShift);
-			}
-		}
-		return $result;
-	}
+        // Задаем время
+        if (!$start instanceof DateTime) {
+            $start = new DateTime('today');
+        }
+        if (!$end instanceof DateTime) {
+            $end = new DateTime('tomorrow');
+        }
+        // Сервис оперирует часовым поясом +0, поэтому корректируем
+        $tz = new DateTimeZone('UTC');
+        $start->setTimezone($tz);
+        $end->setTimezone($tz);
 
-	/**
-	 * @inheritDoc
-	 *
-	 * @throws Exception
-	 * @throws GuzzleException
-	 */
-	public function getDocumentList(ShiftInterface $shift = null, DateTime $start = null, DateTime $end = null): array
-	{
-		$result = [];
+        $cashDeskList = $cashDesk instanceof CashDeskInterface
+            ? [$cashDesk]
+            : $this->getCashDeskList();
+        foreach ($cashDeskList as $cashDesk) {
+            $responseShiftList = $this->getAllItemList(new ShiftList([
+                'fnFactoryNumber' => $cashDesk->getFnFactoryNumber(),
+                'start' => $start->format('Y-m-d\TH:i:s'),
+                'end' => $end->format('Y-m-d\TH:i:s'),
+            ]));
+            foreach ($responseShiftList as $responseShift) {
+                $result[] = new ShiftShort($responseShift);
+            }
+        }
+        return $result;
+    }
 
-		// Задаем время
-		if (!$start instanceof DateTime) {
-			$start = new DateTime('today');
-		}
-		if (!$end instanceof DateTime) {
-			$end = new DateTime('tomorrow');
-		}
-		// Сервис оперирует часовым поясом +0, поэтому корректируем
-		$tz = new DateTimeZone('UTC');
-		$start->setTimezone($tz);
-		$end->setTimezone($tz);
+    /**
+     * @inheritDoc
+     *
+     * @throws Exception
+     * @throws GuzzleException
+     */
+    public function getDocumentList(ShiftInterface $shift = null, DateTime $start = null, DateTime $end = null): array
+    {
+        $result = [];
 
-		$shiftList = $shift instanceof ShiftInterface
-			? [$shift]
-			: $this->getShiftList(null, $start, $end);
-		foreach ($shiftList as $shift) {
-			$responseDocumentList = $this->getAllItemList(new DocumentList([
-				'fnFactoryNumber' => $shift->getFnFactoryNumber(),
-				'shiftNumber'     => $shift->getShiftNumber(),
-			]));
-			foreach ($responseDocumentList as $responseDocument) {
-				$result[] = new Document($responseDocument);
-			}
-		}
-		return $result;
-	}
+        // Задаем время
+        if (!$start instanceof DateTime) {
+            $start = new DateTime('today');
+        }
+        if (!$end instanceof DateTime) {
+            $end = new DateTime('tomorrow');
+        }
+        // Сервис оперирует часовым поясом +0, поэтому корректируем
+        $tz = new DateTimeZone('UTC');
+        $start->setTimezone($tz);
+        $end->setTimezone($tz);
 
-	/**
-	 * @param DocumentInterface $document
-	 * @return Registration|Open|Check|Strict|Close|FnClose|Confirmation|RegistrationChange|State|StrictCorrect
-	 * @throws GuzzleException
-	 * @throws Exception
-	 */
-	public function getDocumentTag(DocumentInterface $document): ffdDocument
-	{
-		$documentTagList = $this->getDocumentTagList($document);
-		return reset($documentTagList);
-	}
+        $shiftList = $shift instanceof ShiftInterface
+            ? [$shift]
+            : $this->getShiftList(null, $start, $end);
 
-	/**
-	 * Получить список тегов (реквизитов) документа(-ов) за заданный период. По умолчанию за сегодня.
-	 *
-	 * @param Document[]|Document $document
-	 * @param DateTime|null $start
-	 * @param DateTime|null $end
-	 * @return Registration[]|Open[]|Check[]|Strict[]|Close[]|FnClose[]|Confirmation[]|RegistrationChange[]|State[]|StrictCorrect[]
-	 * @throws GuzzleException
-	 * @throws Exception
-	 */
-	public function getDocumentTagList($document = null, DateTime $start = null, DateTime $end = null): array
-	{
-		$result = [];
+        foreach ($shiftList as $shift) {
+            $responseDocumentList = $this->getAllItemList(new DocumentList([
+                'fnFactoryNumber' => $shift->getFnFactoryNumber(),
+                'shiftNumber' => $shift->getShiftNumber(),
+            ]));
 
-		// Задаем время
-		if (!$start instanceof DateTime) {
-			$start = new DateTime('today');
-		}
-		if (!$end instanceof DateTime) {
-			$end = new DateTime('tomorrow');
-		}
-		// Сервис оперирует часовым поясом +0, поэтому корректируем
-		$tz = new DateTimeZone('UTC');
-		$start->setTimezone($tz);
-		$end->setTimezone($tz);
+            foreach ($responseDocumentList as $responseDocument) {
+                $result[] = new Document($responseDocument);
+            }
+        }
+        return $result;
+    }
 
-		$documentList = $document instanceof DocumentInterface
-			? [$document]
-			: $this->getDocumentList(null, $start, $end);
-		foreach ($documentList as $document) {
-			$responseDocumentInfo = $this->client->request(new DocumentInfo([
-				'fnFactoryNumber' => $document->getFnFactoryNumber(),
-				'fdNumber'        => $document->getNumber(),
-			]));
+    /**
+     * @param DocumentInterface $document
+     * @return Registration|Open|Check|Strict|Close|FnClose|Confirmation|RegistrationChange|State|StrictCorrect
+     * @throws GuzzleException
+     * @throws Exception
+     */
+    public function getDocumentTag(DocumentInterface $document): ffdDocument
+    {
+        $documentTagList = $this->getDocumentTagList($document);
+        return reset($documentTagList);
+    }
 
-			$tagList = $responseDocumentInfo['document'];
-			$version = $responseDocumentInfo['documentFormatVersion'];
-			$format = ffdDocument::FORMAT_PRINT;
+    public function getAccountList()
+    {
+        $accountList = $this->getAllItemList(new AccountList([]));
+        return json_decode(json_encode((object)$accountList), false);
+    }
 
-			$tagList[Tag1012::getCode()] = (new DateTime($tagList[Tag1012::getCode()], $tz))->format('d.m.y H:i');
+    /**
+     * Получить список тегов (реквизитов) документа(-ов) за заданный период. По умолчанию за сегодня.
+     *
+     * @param Document[]|Document $document
+     * @param DateTime|null $start
+     * @param DateTime|null $end
+     * @return Registration[]|Open[]|Check[]|Strict[]|Close[]|FnClose[]|Confirmation[]|RegistrationChange[]|State[]|StrictCorrect[]
+     * @throws GuzzleException
+     * @throws Exception
+     */
+    public function getDocumentTagList($document = null, DateTime $start = null, DateTime $end = null): array
+    {
+        $result = [];
 
-			switch ($responseDocumentInfo['documentType']) {
-				case ffdDocument::TYPE_REGISTRATION:
-					$result[] = new Registration($version, $format, $tagList);
-					break;
-				case ffdDocument::TYPE_OPEN:
-					$result[] = new Open($version, $format, $tagList);
-					break;
-				case ffdDocument::TYPE_CHECK:
-					$result[] = new Check($version, $format, $tagList);
-					break;
-				case ffdDocument::TYPE_STRICT:
-					$result[] = new Strict($version, $format, $tagList);
-					break;
-				case ffdDocument::TYPE_CLOSE:
-					$result[] = new Close($version, $format, $tagList);
-					break;
-				case ffdDocument::TYPE_FN_CLOSE:
-					$result[] = new FnClose($version, $format, $tagList);
-					break;
-				case ffdDocument::TYPE_CONFIRMATION:
-					$result[] = new Confirmation($version, $format, $tagList);
-					break;
-				case ffdDocument::TYPE_REGISTRATION_CHANGE:
-					$result[] = new RegistrationChange($version, $format, $tagList);
-					break;
-				case ffdDocument::TYPE_STATE:
-					$result[] = new State($version, $format, $tagList);
-					break;
-				case ffdDocument::TYPE_STRICT_CORRECT:
-					$result[] = new StrictCorrect($version, $format, $tagList);
-					break;
-				default:
-					throw new Exception('Неизвестный тип документа');
-			}
-		}
-		return $result;
-	}
+        // Задаем время
+        if (!$start instanceof DateTime) {
+            $start = new DateTime('today');
+        }
+        if (!$end instanceof DateTime) {
+            $end = new DateTime('tomorrow');
+        }
+        // Сервис оперирует часовым поясом +0, поэтому корректируем
+        $tz = new DateTimeZone('UTC');
+        $start->setTimezone($tz);
+        $end->setTimezone($tz);
+
+        $documentList = $document instanceof DocumentInterface
+            ? [$document]
+            : $this->getDocumentList(null, $start, $end);
+
+        foreach ($documentList as $document) {
+            $responseDocumentInfo = $this->client->request(new DocumentInfo([
+                'fnFactoryNumber' => $document->getFnFactoryNumber(),
+                'fdNumber' => $document->getNumber(),
+            ]));
+
+            $tagList = $responseDocumentInfo['document'];
+            $version = $responseDocumentInfo['documentFormatVersion'];
+            $format = ffdDocument::FORMAT_PRINT;
+
+            $tagList[Tag1012::getCode()] = (new DateTime($tagList[Tag1012::getCode()], $tz))->format('d.m.y H:i');
+
+            switch ($responseDocumentInfo['documentType']) {
+                case ffdDocument::TYPE_REGISTRATION:
+                    $result[] = new Registration($version, $format, $tagList);
+                    break;
+                case ffdDocument::TYPE_OPEN:
+                    $result[] = new Open($version, $format, $tagList);
+                    break;
+                case ffdDocument::TYPE_CHECK:
+                    $result[] = new Check($version, $format, $tagList);
+                    break;
+                case ffdDocument::TYPE_STRICT:
+                    $result[] = new Strict($version, $format, $tagList);
+                    break;
+                case ffdDocument::TYPE_CLOSE:
+                    $result[] = new Close($version, $format, $tagList);
+                    break;
+                case ffdDocument::TYPE_FN_CLOSE:
+                    $result[] = new FnClose($version, $format, $tagList);
+                    break;
+                case ffdDocument::TYPE_CONFIRMATION:
+                    $result[] = new Confirmation($version, $format, $tagList);
+                    break;
+                case ffdDocument::TYPE_REGISTRATION_CHANGE:
+                    $result[] = new RegistrationChange($version, $format, $tagList);
+                    break;
+                case ffdDocument::TYPE_STATE:
+                    $result[] = new State($version, $format, $tagList);
+                    break;
+                case ffdDocument::TYPE_STRICT_CORRECT:
+                    $result[] = new StrictCorrect($version, $format, $tagList);
+                    break;
+                default:
+                    throw new Exception('Неизвестный тип документа');
+            }
+        }
+
+        return $result;
+    }
 }

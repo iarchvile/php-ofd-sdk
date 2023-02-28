@@ -136,6 +136,7 @@ abstract class BaseTag
 				DocumentInterface::TYPE_STATE,
 				DocumentInterface::TYPE_CHECK_CORRECT,
 				DocumentInterface::TYPE_STRICT_CORRECT,
+				DocumentInterface::TYPE_CHECK_GOOD,
 			]]],
 			'documentForm' => ['required', ['in', [
 				DocumentInterface::FORMAT_PRINT,

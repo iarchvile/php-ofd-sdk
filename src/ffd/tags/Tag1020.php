@@ -43,7 +43,7 @@ class Tag1020 extends BaseTag
 	{
 		if ($this->documentForm == DocumentInterface::FORMAT_PRINT) {
 			return [
-				'value' => ['required', 'numeric', ['min', 0], ['max', 999999]],
+				'value' => ['required', 'numeric'],
 			];
 		} elseif ($this->documentForm == DocumentInterface::FORMAT_ELECTRONIC) {
 			return [
